@@ -3,72 +3,65 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
-from data_preprocessing import preprocess_data  # Function to preprocess the data
-from data_fetch import fetch_data  # Function to fetch stock data
 
-# Function to create sequences for LSTM input
-def create_sequences(data, sequence_length):
-    X, y = [], []
-    for i in range(len(data) - sequence_length):
-        # Create input sequences of length `sequence_length`
-        X.append(data[i:i + sequence_length])
-        # The corresponding target value is the next point after the sequence
-        y.append(data[i + sequence_length])
-    return np.array(X), np.array(y)
+from data_fetch import fetch_data
+from data_preprocessing import preprocess_data, create_sequences
 
-# Function to build the LSTM model
 def build_model(input_shape):
+    """
+    Builds a simple 2-layer LSTM with dropout, compiled with MSE loss.
+    input_shape = (sequence_length, num_features).
+    """
     model = Sequential([
-        # First LSTM layer, with `return_sequences=True` to output sequences
-        LSTM(50, return_sequences=True, input_shape=input_shape),
-        # Dropout to randomly deactivate neurons, preventing overfitting
+        LSTM(64, return_sequences=True, input_shape=input_shape),
         Dropout(0.2),
-        # Second LSTM layer
-        LSTM(50),
-        # Dropout again for regularization
+        LSTM(64),
         Dropout(0.2),
-        # Dense layer to produce the final prediction
         Dense(1)
     ])
-    # Compile the model using the Adam optimizer and mean squared error loss
-    model.compile(optimizer='adam', loss='mean_squared_error')
+    model.compile(optimizer="adam", loss="mean_squared_error")
     return model
 
 if __name__ == "__main__":
-    # Ask the user for the stock symbol
-    stock_symbol = input("Enter the stock symbol (e.g., AAPL, GOOG, MSFT): ").upper()
+    # 1) Symbol
+    symbol = input("Enter the stock symbol (e.g. AAPL, GOOG, MSFT): ").upper()
 
-    # Define the file path to save or load the stock data
-    save_path = f"data/{stock_symbol}_stock.csv"
-    
-    # Fetch stock data if it does not already exist
-    if not os.path.exists(save_path):
-        fetch_data(stock_symbol, save_path=save_path)
-    # Load the stock data into a Pandas DataFrame
-    df = pd.read_csv(save_path)
+    # 2) Fetch data if not present
+    csv_path = f"data/{symbol}_daily.csv"
+    if not os.path.exists(csv_path):
+        fetch_data(symbol, csv_path)
 
-    # Preprocess the data: normalize and split into training and testing sets
-    train_data, test_data, scaler = preprocess_data(df)
+    # 3) Load CSV
+    df = pd.read_csv(csv_path)
+    df["Date"] = pd.to_datetime(df["Date"])
 
-    # Define the sequence length for the LSTM input
-    sequence_length = 50
-    # Create sequences for training and testing
-    X_train, y_train = create_sequences(train_data, sequence_length)
-    X_test, y_test = create_sequences(test_data, sequence_length)
+    # 4) Preprocess (just raw daily data)
+    feature_cols = ["Open","High","Low","Close","Volume"]
+    target_col   = "Close"
+    train_data, test_data, scaler, target_idx, train_dates, test_dates = preprocess_data(
+        df, feature_cols=feature_cols, target_col=target_col, split_ratio=0.8
+    )
 
-    # Define the file path to save or load the trained LSTM model
-    model_path = f"models/{stock_symbol}_lstm_model.h5"
-    
-    # Check if a pre-trained model exists
+    # 5) Create sequences
+    sequence_length = 60
+    X_train, y_train = create_sequences(train_data, target_idx, sequence_length)
+    X_test,  y_test  = create_sequences(test_data,  target_idx, sequence_length)
+
+    print("X_train:", X_train.shape, "y_train:", y_train.shape)
+    print("X_test:", X_test.shape, "y_test:", y_test.shape)
+
+    # 6) Build or load model
+    os.makedirs("models", exist_ok=True)
+    model_path = f"models/{symbol}_lstm_daily.h5"
     if os.path.exists(model_path):
-        # Load the pre-trained model
+        print(f"Loading existing model from {model_path}...")
         model = load_model(model_path)
     else:
-        # Build a new LSTM model
-        model = build_model(input_shape=(X_train.shape[1], X_train.shape[2]))
-        # Train the model on the training data
+        print("No saved model found. Building and training a new one...")
+        model = build_model((X_train.shape[1], X_train.shape[2]))
         model.fit(
             X_train, y_train,
             epochs=20,
@@ -76,46 +69,98 @@ if __name__ == "__main__":
             validation_data=(X_test, y_test),
             verbose=1
         )
-        # Save the trained model to disk
-        os.makedirs("models", exist_ok=True)
         model.save(model_path)
+        print(f"Model saved at {model_path}")
 
-    # Make predictions on the test data
-    predictions = model.predict(X_test)
-    # Denormalize predictions to get actual stock prices
-    predictions = scaler.inverse_transform(predictions)
-    # Denormalize the true test values
-    y_test_original = scaler.inverse_transform(y_test.reshape(-1, 1))
+    # 7) Predict on the test set
+    predictions = model.predict(X_test)  # shape (samples,1)
 
-    # Visualize the predictions for the last 365 days
-    num_days_to_display = 365
-    # Extract the last 365 days of predicted prices
-    last_365_predictions = predictions[-num_days_to_display:]
-    # Extract the last 365 days of actual prices
-    last_365_actual = y_test_original[-num_days_to_display:]
-    # Extract the corresponding dates for the last 365 days
-    last_365_dates = df['Date'][-num_days_to_display:]
+    # 8) Invert predictions properly
+    inv_preds = []
+    for i in range(len(predictions)):
+        # i-th sample => day (i + sequence_length) in test_data
+        scaled_row = test_data[i + sequence_length].copy()
+        scaled_row[target_idx] = predictions[i, 0]
+        unscaled = scaler.inverse_transform([scaled_row])[0]
+        inv_preds.append(unscaled[target_idx])
+    inv_preds = np.array(inv_preds)
 
-    # Plot the actual vs. predicted stock prices for the last 365 days
-    plt.figure(figsize=(10, 6))
-    plt.plot(last_365_dates, last_365_actual, label="Actual Prices", color="blue")
-    plt.plot(last_365_dates, last_365_predictions, label="Predicted Prices", color="red")
-    plt.title(f"Stock Price Prediction for the Last {num_days_to_display} Days ({stock_symbol})")
+    # Also invert y_test
+    inv_y = []
+    for i in range(len(y_test)):
+        row_copy = test_data[i + sequence_length].copy()
+        row_copy[target_idx] = y_test[i, 0]
+        unscaled = scaler.inverse_transform([row_copy])[0]
+        inv_y.append(unscaled[target_idx])
+    inv_y = np.array(inv_y)
+
+    # 9) Align test dates
+    test_dates_adj = test_dates[sequence_length:]
+
+    # 10) Plot the last year
+    last_year = pd.Timestamp.now() - pd.Timedelta(days=365)
+    idx_start = 0
+    for i, d in enumerate(test_dates_adj):
+        if pd.to_datetime(d) >= last_year:
+            idx_start = i
+            break
+
+    show_dates = test_dates_adj[idx_start:]
+    show_preds = inv_preds[idx_start:]
+    show_true  = inv_y[idx_start:]
+
+    plt.figure(figsize=(10,6))
+    plt.plot(show_dates, show_true, label="Actual Close", color="blue")
+    plt.plot(show_dates, show_preds, label="Predicted Close", color="red")
+
+    # ------------------------------------------------------------------
+    # 11) Predict ONLY the 4th day in the future (not days 1,2,3,4).
+    #     We'll do the rolling approach but only plot/print the final day
+    # ------------------------------------------------------------------
+    future_days = 4
+    last_seq = X_test[-1:].copy()  # shape (1, 60, num_features)
+    # We'll reuse the final scaled row of test_data for baseline O/H/L/Volume
+    last_real_scaled_row = test_data[-1].copy()
+    
+    # Make repeated predictions but only keep the 4th
+    final_future_scaled_value = None
+    for day_idx in range(1, future_days+1):
+        next_pred = model.predict(last_seq)  # shape (1,1)
+        # Overwrite the target in a new row
+        new_day = last_real_scaled_row.copy()
+        new_day[target_idx] = next_pred[0][0]
+        # Slide window
+        last_seq = np.concatenate(
+            [last_seq[:,1:,:], new_day.reshape(1,1,-1)],
+            axis=1
+        )
+        last_real_scaled_row = new_day
+
+        if day_idx == future_days:
+            # This is the 4th day
+            final_future_scaled_value = next_pred[0][0]
+
+    # Invert just that final future day
+    row_copy = last_real_scaled_row.copy()
+    row_copy[target_idx] = final_future_scaled_value
+    final_unscaled = scaler.inverse_transform([row_copy])[0]
+    future_close = final_unscaled[target_idx]
+
+    # Let's define that 4th future day date as test_dates_adj[-1] + 4 days
+    last_test_date = pd.to_datetime(test_dates_adj[-1])
+    future_day_date = last_test_date + pd.Timedelta(days=future_days)
+
+    # Plot only the single day as a green dot
+    plt.scatter([future_day_date], [future_close], color="green", label="4th Day Prediction")
+    plt.text(future_day_date, future_close, f"{future_close:.2f}", color="green", fontsize=9, ha="left")
+
+    plt.title(f"Daily Stock Price Prediction for {symbol}\n(Last 1 Year + Only the 4th Future Week)")
     plt.xlabel("Date")
-    plt.ylabel("Price")
+    plt.ylabel("Stock Price (USD)")
     plt.legend()
-
-    # Format the x-axis to avoid overlapping dates
-    plt.gca().xaxis.set_major_locator(mdates.MonthLocator(interval=1))
     plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     plt.gcf().autofmt_xdate()
-
-    # Show the plot
     plt.show()
 
-    # Predict the stock price for the next day using the last sequence in the test set
-    last_sequence = X_test[-1].reshape(1, sequence_length, 1)
-    next_day_prediction = model.predict(last_sequence)
-    # Denormalize the prediction to get the actual price
-    next_day_prediction = scaler.inverse_transform(next_day_prediction)
-    print(f"Predicted price for the next day ({stock_symbol}): ${next_day_prediction[0][0]:.2f}")
+    # Print only that final 4th day prediction
+    print(f"The 4th future day prediction: {future_day_date.date()} => ${future_close:.2f}")

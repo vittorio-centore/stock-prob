@@ -1,58 +1,75 @@
-from sklearn.preprocessing import MinMaxScaler
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
 
-def load_and_explore_data(file_path: str):
-    # Load the CSV file
-    df = pd.read_csv(file_path)
-    
-    # Display the first few rows
-    print("First 5 rows of the dataset:")
-    print(df.head())
-    
-    # Display basic statistics
-    print("\nDataset statistics:")
-    print(df.describe())
+def preprocess_data(
+    df, 
+    feature_cols=["Open","High","Low","Close","Volume"], 
+    target_col="Close", 
+    split_ratio=0.8
+):
+    """
+    1) Sorts the DataFrame by Date ascending.
+    2) Extracts `feature_cols`.
+    3) Scales them to [0,1] with MinMaxScaler.
+    4) Splits into train_data and test_data by `split_ratio`.
+    5) Returns (train_data, test_data, scaler, target_idx, train_dates, test_dates).
+    """
+    # Ensure sorted by Date
+    df = df.sort_values("Date").reset_index(drop=True)
+    # Remember the date column for referencing
+    dates = df["Date"].copy()
 
-    # Check for missing values
-    print("\nMissing values:")
-    print(df.isnull().sum())
-    
-    # Plot stock prices
-    plt.figure(figsize=(10, 5))
-    plt.plot(df['Date'], df['Close'], label='Close Price')
-    plt.xlabel('Date')
-    plt.ylabel('Close Price')
-    plt.title('Stock Price Over Time')
-    plt.legend()
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.show()
+    missing_cols = set(feature_cols) - set(df.columns)
+    if missing_cols:
+        raise ValueError(f"Missing columns in DataFrame: {missing_cols}")
 
-if __name__ == "__main__":
-    load_and_explore_data("data/aapl_stock.csv")
+    # Extract feature data
+    data = df[feature_cols].values  # shape: (N, num_features)
 
-def preprocess_data(df, feature='Close', split_ratio=0.8):
-    # Sort by date (if not already sorted)
-    df = df.sort_values('Date')
-    
-    # Extract the feature of interest
-    data = df[feature].values.reshape(-1, 1)
-
-    # Normalize data using MinMaxScaler
+    # Scale
     scaler = MinMaxScaler()
     data_scaled = scaler.fit_transform(data)
 
-    # Split into training and test sets
+    # Identify target index in feature_cols
+    target_idx = feature_cols.index(target_col)
+
+    # Train/test split
     split_index = int(len(data_scaled) * split_ratio)
     train_data = data_scaled[:split_index]
-    test_data = data_scaled[split_index:]
+    test_data  = data_scaled[split_index:]
 
-    return train_data, test_data, scaler
+    train_dates = dates[:split_index].values
+    test_dates  = dates[split_index:].values
+
+    return train_data, test_data, scaler, target_idx, train_dates, test_dates
+
+def create_sequences(data, target_idx, sequence_length=60):
+    """
+    data shape: (N, num_features).
+    Returns:
+      X: (samples, sequence_length, num_features)
+      y: (samples, 1) -> the target at the next step
+    """
+    X, y = [], []
+    for i in range(len(data) - sequence_length):
+        X.append(data[i : i + sequence_length])
+        # Next day’s target
+        y.append(data[i + sequence_length, target_idx])
+    X = np.array(X)
+    y = np.array(y).reshape(-1, 1)
+    return X, y
 
 if __name__ == "__main__":
-    df = pd.read_csv("data/aapl_stock.csv")
-    train_data, test_data, scaler = preprocess_data(df)
-    print(f"Training data size: {len(train_data)}")
-    print(f"Test data size: {len(test_data)}")
+    # Quick test
+    df_sample = pd.DataFrame({
+        "Date": pd.date_range("2023-01-01", periods=100, freq="D"),
+        "Open": np.random.rand(100)*100,
+        "High": np.random.rand(100)*100,
+        "Low": np.random.rand(100)*100,
+        "Close": np.random.rand(100)*100,
+        "Volume": np.random.randint(100000,500000,size=100)
+    })
+    train_data, test_data, scaler, tgt_idx, tr_dates, ts_dates = preprocess_data(df_sample)
+    X_train, y_train = create_sequences(train_data, tgt_idx, 3)
+    print("X_train shape:", X_train.shape, "y_train shape:", y_train.shape)
