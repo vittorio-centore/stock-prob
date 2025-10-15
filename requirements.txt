@@ -1,10 +1,60 @@
-pandas==1.5.3
-numpy==1.23.5
-matplotlib==3.7.1
-seaborn==0.12.2
-scikit-learn==1.2.2
-pandas-datareader==0.10.0
-yfinance==0.2.20
-tensorflow==2.14.0
-scipy==1.10.1
-requests==2.31.0
+# ===========================================
+# COMPLETE REQUIREMENTS FOR STOCK PREDICTOR
+# ===========================================
+
+# Core Data Science Stack
+pandas==2.3.3
+numpy==2.0.2
+matplotlib==3.9.4
+seaborn==0.13.2
+scikit-learn==1.6.1
+scipy==1.13.1
+requests==2.32.5
+
+# Deep Learning Framework - PyTorch Only
+torch>=2.8.0
+torchvision>=0.23.0
+
+# Stock Data & Financial APIs
+yfinance>=0.2.66
+pandas-datareader>=0.10.0
+alpha-vantage>=2.3.1
+
+# Technical Analysis
+# Note: TA-Lib may require additional system setup on some platforms
+# If it fails, the code has backup implementations
+TA-Lib>=0.4.28
+
+# News & Sentiment Analysis
+newsapi-python>=0.2.6
+textblob>=0.19.0
+tweepy>=4.14.0
+praw>=7.7.0
+
+# Alternative Data Sources
+pytrends>=4.9.2
+
+# Enhanced ML Models
+xgboost>=1.7.0
+lightgbm>=4.0.0
+optuna>=3.3.0
+
+# Advanced Visualizations & Web
+plotly>=6.3.1
+streamlit>=1.25.0
+dash>=2.12.0
+
+# Web Framework (for future phases)
+fastapi>=0.100.0
+uvicorn>=0.23.0
+websockets>=15.0.0
+
+# Production & Monitoring (optional)
+mlflow>=2.5.0
+wandb>=0.15.0
+redis>=4.6.0
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.67.1
+joblib>=1.5.2
