@@ -15,53 +15,34 @@ class InteractiveVisualizer:
         os.makedirs(self.output_dir, exist_ok=True)
     
     def create_prediction_dashboard(self, dates, actual, predictions, feature_cols, performance_metrics):
-        """Create a comprehensive interactive dashboard"""
+        """Create a focused dashboard with main predictions and model analysis"""
         
-        # Create subplots
+        # Create simple 2-chart layout
         fig = make_subplots(
-            rows=3, cols=2,
+            rows=2, cols=1,
             subplot_titles=[
-                'Stock Price Predictions vs Actual',
-                'Prediction Errors Over Time', 
-                'Model Performance Comparison',
-                'Uncertainty Bands (Transformer)',
-                'Feature Importance (Top 10)',
-                'Prediction Accuracy Distribution'
+                'Stock Price Predictions vs Actual (with 3-Day Forecast)',
+                'Model Performance Analysis'
             ],
-            specs=[
-                [{"colspan": 2}, None],  # Full width for main chart
-                [{"type": "scatter"}, {"type": "scatter"}],
-                [{"type": "bar"}, {"type": "histogram"}]
-            ],
-            vertical_spacing=0.08,
-            horizontal_spacing=0.1
+            vertical_spacing=0.15,
+            row_heights=[0.75, 0.25]  # Main chart bigger
         )
         
-        # 1. Main prediction chart (full width)
-        self._add_main_predictions(fig, dates, actual, predictions, row=1, col=1)
+        # 1. Main prediction chart with 3-day forecast
+        self._add_main_predictions_with_forecast(fig, dates, actual, predictions, row=1, col=1)
         
-        # 2. Prediction errors
-        self._add_error_analysis(fig, dates, actual, predictions, row=2, col=1)
-        
-        # 3. Model comparison
-        self._add_model_comparison(fig, performance_metrics, row=2, col=2)
-        
-        # 4. Uncertainty bands (if available)
-        if 'transformer_lower' in predictions and 'transformer_upper' in predictions:
-            self._add_uncertainty_bands(fig, dates, actual, predictions, row=3, col=1)
-        
-        # 5. Feature importance (mock data for now - will be real when feature analysis works)
-        self._add_feature_importance(fig, feature_cols, row=3, col=2)
+        # 2. Model performance analysis
+        self._add_detailed_model_analysis(fig, actual, predictions, performance_metrics, row=2, col=1)
         
         # Update layout
         fig.update_layout(
-            height=1200,
+            height=800,
             title_text=f"{self.symbol} Stock Prediction Dashboard",
             title_x=0.5,
             title_font_size=24,
             showlegend=True,
             template="plotly_white",
-            font=dict(family="Arial, sans-serif", size=12)
+            font=dict(family="Arial, sans-serif", size=14)
         )
         
         # Save as HTML
@@ -321,6 +302,185 @@ class InteractiveVisualizer:
         print(f"📈 Simple chart saved: {html_file}")
         
         return fig
+
+    def _add_main_predictions_with_forecast(self, fig, dates, actual, predictions, row, col):
+        """Add main prediction chart with 3-day future forecast"""
+        
+        # Convert dates to pandas datetime for easier manipulation
+        dates_pd = pd.to_datetime(dates)
+        
+        # Create 3-day future dates
+        last_date = dates_pd[-1]
+        future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=3, freq='D')
+        
+        # Generate 3-day predictions based on recent trend
+        recent_trend = np.mean(np.diff(predictions['ensemble'][-10:]))  # Last 10 days trend
+        last_price = predictions['ensemble'][-1]
+        
+        # Project future based on trend
+        future_predictions = []
+        for i in range(3):
+            future_pred = last_price + recent_trend * (i+1)
+            future_predictions.append(future_pred)
+        
+        # Combine current and future dates/predictions
+        all_dates = np.concatenate([dates_pd, future_dates])
+        ensemble_with_future = np.concatenate([predictions['ensemble'], future_predictions])
+        
+        # Actual prices (only historical)
+        fig.add_trace(
+            go.Scatter(
+                x=dates_pd,
+                y=actual,
+                mode='lines',
+                name='Actual Price',
+                line=dict(color='black', width=3),
+                hovertemplate='<b>Actual</b><br>Date: %{x}<br>Price: $%{y:.2f}<extra></extra>'
+            ),
+            row=row, col=col
+        )
+        
+        # Ensemble predictions (historical + future)
+        fig.add_trace(
+            go.Scatter(
+                x=all_dates,
+                y=ensemble_with_future,
+                mode='lines',
+                name='Ensemble Prediction',
+                line=dict(color='purple', width=2),
+                hovertemplate='<b>Ensemble</b><br>Date: %{x}<br>Price: $%{y:.2f}<extra></extra>'
+            ),
+            row=row, col=col
+        )
+        
+        # Transformer predictions
+        fig.add_trace(
+            go.Scatter(
+                x=dates_pd,
+                y=predictions['transformer'],
+                mode='lines',
+                name='Transformer',
+                line=dict(color='red', width=2, dash='dot'),
+                hovertemplate='<b>Transformer</b><br>Date: %{x}<br>Price: $%{y:.2f}<extra></extra>'
+            ),
+            row=row, col=col
+        )
+        
+        # LSTM predictions
+        fig.add_trace(
+            go.Scatter(
+                x=dates_pd,
+                y=predictions['lstm'],
+                mode='lines',
+                name='LSTM',
+                line=dict(color='blue', width=2, dash='dash'),
+                hovertemplate='<b>LSTM</b><br>Date: %{x}<br>Price: $%{y:.2f}<extra></extra>'
+            ),
+            row=row, col=col
+        )
+        
+        # Confidence bands (if available)
+        if 'transformer_lower' in predictions and 'transformer_upper' in predictions:
+            fig.add_trace(
+                go.Scatter(
+                    x=dates_pd,
+                    y=predictions['transformer_upper'],
+                    mode='lines',
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ),
+                row=row, col=col
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=dates_pd,
+                    y=predictions['transformer_lower'],
+                    mode='lines',
+                    line=dict(width=0),
+                    fill='tonexty',
+                    fillcolor='rgba(255,0,0,0.1)',
+                    name='Confidence Interval',
+                    hovertemplate='<b>Confidence Band</b><br>Upper: $%{y:.2f}<extra></extra>'
+                ),
+                row=row, col=col
+            )
+        
+        # Add forecast period indicator
+        fig.add_trace(
+            go.Scatter(
+                x=future_dates,
+                y=future_predictions,
+                mode='lines+markers',
+                name='3-Day Forecast',
+                line=dict(color='orange', width=3, dash='dash'),
+                marker=dict(size=8, color='orange'),
+                hovertemplate='<b>3-Day Forecast</b><br>Date: %{x}<br>Price: $%{y:.2f}<extra></extra>'
+            ),
+            row=row, col=col
+        )
+        
+        # Add vertical line to separate historical from forecast
+        fig.add_shape(
+            type="line",
+            x0=dates_pd[-1], x1=dates_pd[-1],
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color="gray", width=2, dash="dash"),
+            row=row, col=col
+        )
+        
+        # Add annotation for forecast
+        fig.add_annotation(
+            x=dates_pd[-1],
+            y=0.9,
+            yref="paper",
+            text="3-Day Forecast →",
+            showarrow=False,
+            font=dict(color="gray", size=12),
+            row=row, col=col
+        )
+        
+        # Update axes
+        fig.update_xaxes(title_text="Date", row=row, col=col)
+        fig.update_yaxes(title_text="Stock Price ($)", row=row, col=col)
+    
+    def _add_detailed_model_analysis(self, fig, actual, predictions, performance_metrics, row, col):
+        """Add detailed model performance analysis"""
+        
+        # Calculate errors for each model
+        ensemble_error = np.abs(actual - predictions['ensemble'])
+        transformer_error = np.abs(actual - predictions['transformer'])
+        lstm_error = np.abs(actual - predictions['lstm'])
+        
+        # Model names and their MAE values
+        models = ['Ensemble', 'Transformer', 'LSTM']
+        mae_values = [
+            np.mean(ensemble_error),
+            np.mean(transformer_error), 
+            np.mean(lstm_error)
+        ]
+        
+        # Color coding: green for best, red for worst
+        colors = ['purple', 'red', 'blue']
+        
+        # Create bar chart
+        fig.add_trace(
+            go.Bar(
+                x=models,
+                y=mae_values,
+                name='Mean Absolute Error',
+                marker_color=colors,
+                text=[f'${mae:.2f}' for mae in mae_values],
+                textposition='auto',
+                hovertemplate='<b>%{x}</b><br>MAE: $%{y:.2f}<br>Lower is better<extra></extra>'
+            ),
+            row=row, col=col
+        )
+        
+        # Update axes
+        fig.update_xaxes(title_text="Model", row=row, col=col)
+        fig.update_yaxes(title_text="Mean Absolute Error ($)", row=row, col=col)
 
 def create_visualization_summary(symbol, performance_metrics):
     """Create a text summary of results"""

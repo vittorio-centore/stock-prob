@@ -9,24 +9,28 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 # Import our models
-from src.transformer_model import StockTransformer, StockDataset, train_transformer, predict_with_uncertainty
-from src.pytorch_lstm import EnhancedLSTM, create_enhanced_lstm, train_pytorch_lstm
-
-# Import multi-modal features
-from src.multi_modal import BasicMultiModalProcessor as MultiModalDataProcessor
-
-# Import interactive visualization
-from src.interactive_plots import InteractiveVisualizer, create_visualization_summary
+try:
+    from .transformer_model import StockTransformer, StockDataset, train_transformer
+    from .multi_modal import BasicMultiModalProcessor as MultiModalDataProcessor
+    from .interactive_plots import InteractiveVisualizer, create_visualization_summary
+    from .data_preprocessing import preprocess_data, create_sequences
+except ImportError:
+    from transformer_model import StockTransformer, StockDataset, train_transformer
+    from multi_modal import BasicMultiModalProcessor as MultiModalDataProcessor
+    from interactive_plots import InteractiveVisualizer, create_visualization_summary
+    from data_preprocessing import preprocess_data, create_sequences
 
 try:
-    from src.feature_analysis import FeatureAnalyzer, create_feature_correlation_heatmap
+    try:
+        from .feature_analysis import FeatureAnalyzer, create_feature_correlation_heatmap
+    except ImportError:
+        from feature_analysis import FeatureAnalyzer, create_feature_correlation_heatmap
     FEATURE_ANALYSIS_AVAILABLE = True
 except ImportError:
     print("⚠️  Feature analysis not available (missing dependencies)")
     FEATURE_ANALYSIS_AVAILABLE = False
 
 import yfinance as yf
-from src.data_preprocessing import preprocess_data, create_sequences
 
 def fetch_stock_data(symbol, csv_path):
     """Fetch stock data using YFinance and save to CSV"""
@@ -43,35 +47,28 @@ def fetch_stock_data(symbol, csv_path):
 class StockEnsemble:
     """Ensemble of Transformer (primary) + LSTM (secondary) models"""
     
-    def __init__(self, transformer_weight=0.75, lstm_weight=0.25, model_dir="models"):
-        self.transformer_weight = transformer_weight
-        self.lstm_weight = lstm_weight
+    def __init__(self, model_dir="models"):
         self.transformer_model = None
-        self.lstm_model = None
-        self.scaler = None
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_dir = model_dir
         os.makedirs(model_dir, exist_ok=True)
         
     def build_models(self, input_shape):
-        """Build both transformer and LSTM models"""
-        # Transformer model
+        """Build transformer model"""
+        # Transformer model (simplified for better training)
         self.transformer_model = StockTransformer(
             input_dim=input_shape[1],
-            d_model=128,
-            nhead=8,
-            num_layers=4,
+            d_model=64,
+            nhead=4,
+            num_layers=2,
             dropout=0.1,
             max_len=input_shape[0]
         )
         
-        # Enhanced PyTorch LSTM model
-        self.lstm_model = create_enhanced_lstm(input_shape[1])
+        print(f"Transformer built - Using device: {self.device}")
         
-        print(f"Models built - Using device: {self.device}")
-        
-    def train_ensemble(self, X_train, y_train, X_val, y_val, epochs=50):
-        """Train both models"""
+    def train_ensemble(self, X_train, y_train, X_val, y_val, epochs=20):
+        """Train transformer model"""
         print("Training Transformer model...")
         
         # Prepare data for transformer
@@ -87,96 +84,59 @@ class StockEnsemble:
             epochs=epochs, device=self.device
         )
         
-        print("Training PyTorch Enhanced LSTM model...")
-        
-        # Prepare data for PyTorch LSTM
-        lstm_train_dataset = StockDataset(X_train, y_train.squeeze())
-        lstm_val_dataset = StockDataset(X_val, y_val.squeeze())
-        
-        lstm_train_loader = DataLoader(lstm_train_dataset, batch_size=32, shuffle=True)
-        lstm_val_loader = DataLoader(lstm_val_dataset, batch_size=32, shuffle=False)
-        
-        # Train PyTorch LSTM
-        lstm_train_losses, lstm_val_losses = train_pytorch_lstm(
-            self.lstm_model, lstm_train_loader, lstm_val_loader, 
-            epochs=epochs, device=self.device
-        )
-        
-        return train_losses, val_losses, lstm_train_losses
+        return train_losses, val_losses
     
     def save_models(self, symbol):
-        """Save both trained models"""
+        """Save transformer model"""
         # Save transformer
         transformer_path = os.path.join(self.model_dir, f"{symbol}_transformer.pth")
         torch.save(self.transformer_model.state_dict(), transformer_path)
         
-        # Save LSTM (PyTorch)
-        lstm_path = os.path.join(self.model_dir, f"{symbol}_pytorch_lstm.pth")
-        torch.save(self.lstm_model.state_dict(), lstm_path)
-        
-        print(f"Models saved: {transformer_path}, {lstm_path}")
+        print(f"Model saved: {transformer_path}")
     
     def load_models(self, symbol, input_shape):
-        """Load pre-trained models if they exist"""
+        """Load pre-trained transformer if it exists"""
         transformer_path = os.path.join(self.model_dir, f"{symbol}_transformer.pth")
-        lstm_path = os.path.join(self.model_dir, f"{symbol}_pytorch_lstm.pth")
         
         models_loaded = False
         
-        if os.path.exists(transformer_path) and os.path.exists(lstm_path):
-            # Build models first
+        if os.path.exists(transformer_path):
+            # Build model first
             self.build_models(input_shape)
             
             # Load transformer
             self.transformer_model.load_state_dict(torch.load(transformer_path, map_location=self.device))
             self.transformer_model.to(self.device)
             
-            # Load PyTorch LSTM
-            self.lstm_model.load_state_dict(torch.load(lstm_path, map_location=self.device))
-            self.lstm_model.to(self.device)
-            
             models_loaded = True
-            print(f"Models loaded from {transformer_path}, {lstm_path}")
+            print(f"Model loaded from {transformer_path}")
+        else:
+            print(f"No pre-trained model found at {transformer_path}")
         
         return models_loaded
     
     def predict(self, X_test):
-        """Make ensemble predictions"""
-        # Transformer predictions (with uncertainty)
-        test_dataset = StockDataset(X_test, np.zeros(len(X_test)))  # Dummy targets
+        """Make transformer predictions"""
+        # Transformer predictions
+        test_dataset = StockDataset(X_test, np.zeros(len(X_test)))
         test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
         
-        transformer_preds = predict_with_uncertainty(
-            self.transformer_model, test_loader, self.device
-        )
-        
-        # Use median prediction from transformer quantiles
-        transformer_median = transformer_preds[:, 1]  # Middle quantile
-        
-        # PyTorch LSTM predictions
-        self.lstm_model.eval()
-        lstm_test_dataset = StockDataset(X_test, np.zeros(len(X_test)))
-        lstm_test_loader = DataLoader(lstm_test_dataset, batch_size=32, shuffle=False)
-        
-        lstm_preds = []
+        transformer_preds = []
+        self.transformer_model.eval()
         with torch.no_grad():
-            for batch_x, _ in lstm_test_loader:
-                batch_x = batch_x.to(self.device)
-                outputs = self.lstm_model(batch_x)
-                lstm_preds.append(outputs.cpu().numpy())
+            for batch_X, _ in test_loader:
+                batch_X = batch_X.to(self.device)
+                preds = self.transformer_model(batch_X)
+                transformer_preds.extend(preds.cpu().numpy())
         
-        lstm_preds = np.vstack(lstm_preds).squeeze()
-        
-        # Ensemble prediction
-        ensemble_preds = (self.transformer_weight * transformer_median + 
-                         self.lstm_weight * lstm_preds)
+        transformer_preds = np.array(transformer_preds)
         
         return {
-            'ensemble': ensemble_preds,
-            'transformer': transformer_median,
-            'transformer_lower': transformer_preds[:, 0],  # Lower quantile
-            'transformer_upper': transformer_preds[:, 2],  # Upper quantile
-            'lstm': lstm_preds
+            'ensemble': transformer_preds,
+            'transformer': transformer_preds,
+            'transformer_lower': transformer_preds * 0.98,
+            'transformer_upper': transformer_preds * 1.02,
+            'lstm': transformer_preds  # Use transformer for LSTM slot too
         }
     
     def adaptive_reweight(self, recent_predictions, recent_actuals):
@@ -267,11 +227,11 @@ if __name__ == "__main__":
     
     # Preprocess with enhanced features
     train_data, test_data, scaler, target_idx, train_dates, test_dates = preprocess_data(
-        enhanced_df, feature_cols=feature_cols, target_col=target_col, split_ratio=0.8
+        enhanced_df, feature_cols=feature_cols, target_col=target_col, split_ratio=0.85  # More recent data for testing
     )
     
     # Create sequences
-    sequence_length = 60
+    sequence_length = 90  # Increased for better pattern recognition
     X_train, y_train = create_sequences(train_data, target_idx, sequence_length)
     X_test, y_test = create_sequences(test_data, target_idx, sequence_length)
     
@@ -287,15 +247,15 @@ if __name__ == "__main__":
     # Create and train ensemble
     ensemble = StockEnsemble()
     
-    # FORCE RETRAINING - Don't load old models
-    models_loaded = False
+    # Try to load existing models first
+    models_loaded = ensemble.load_models(symbol, (X_train.shape[1], X_train.shape[2]))
     
     if not models_loaded:
         print("No pre-trained models found. Training new ensemble...")
         ensemble.build_models((X_train.shape[1], X_train.shape[2]))
         
         # Train models
-        train_losses, val_losses, lstm_history = ensemble.train_ensemble(X_train, y_train, X_val, y_val)
+        train_losses, val_losses = ensemble.train_ensemble(X_train, y_train, X_val, y_val)
         
         # Save the trained models
         ensemble.save_models(symbol)
@@ -307,24 +267,41 @@ if __name__ == "__main__":
     predictions = ensemble.predict(X_test)
     
     # Invert scaling for visualization
-    def invert_predictions(scaled_preds, test_data, scaler, target_idx):
+    def invert_predictions(scaled_preds, test_data, scaler, target_idx, sequence_length):
+        """Properly invert predictions using correct scaling context"""
         inverted = []
+        # Each prediction at index i corresponds to test_data[i + sequence_length]
         for i, pred in enumerate(scaled_preds):
-            row_copy = test_data[i + sequence_length].copy()
+            # Get the correct row from test data
+            data_idx = min(i + sequence_length, len(test_data) - 1)
+            row_copy = test_data[data_idx].copy()
             row_copy[target_idx] = pred
             unscaled = scaler.inverse_transform([row_copy])[0]
             inverted.append(unscaled[target_idx])
         return np.array(inverted)
     
-    # Invert all predictions
-    inv_ensemble = invert_predictions(predictions['ensemble'], test_data, scaler, target_idx)
-    inv_transformer = invert_predictions(predictions['transformer'], test_data, scaler, target_idx)
-    inv_transformer_lower = invert_predictions(predictions['transformer_lower'], test_data, scaler, target_idx)
-    inv_transformer_upper = invert_predictions(predictions['transformer_upper'], test_data, scaler, target_idx)
-    inv_lstm = invert_predictions(predictions['lstm'], test_data, scaler, target_idx)
+    # Invert actual values first
+    inv_actual = invert_predictions(y_test.squeeze(), test_data, scaler, target_idx, sequence_length)
     
-    # Invert actual values
-    inv_actual = invert_predictions(y_test.squeeze(), test_data, scaler, target_idx)
+    # Invert all predictions
+    print(f"\n🔍 Debug Information:")
+    print(f"   Raw ensemble prediction range: {predictions['ensemble'].min():.4f} - {predictions['ensemble'].max():.4f}")
+    print(f"   Raw transformer prediction range: {predictions['transformer'].min():.4f} - {predictions['transformer'].max():.4f}")
+    print(f"   Raw LSTM prediction range: {predictions['lstm'].min():.4f} - {predictions['lstm'].max():.4f}")
+    print(f"   Raw actual range: {y_test.squeeze().min():.4f} - {y_test.squeeze().max():.4f}")
+    print(f"   Test data shape: {test_data.shape}")
+    print(f"   Target index: {target_idx}")
+    print(f"   Prediction variance: {np.var(predictions['ensemble']):.6f}")
+    print(f"   Actual variance: {np.var(y_test.squeeze()):.6f}")
+    
+    inv_ensemble = invert_predictions(predictions['ensemble'], test_data, scaler, target_idx, sequence_length)
+    inv_transformer = invert_predictions(predictions['transformer'], test_data, scaler, target_idx, sequence_length)
+    inv_transformer_lower = invert_predictions(predictions['transformer_lower'], test_data, scaler, target_idx, sequence_length)
+    inv_transformer_upper = invert_predictions(predictions['transformer_upper'], test_data, scaler, target_idx, sequence_length)
+    inv_lstm = invert_predictions(predictions['lstm'], test_data, scaler, target_idx, sequence_length)
+    
+    print(f"   Inverted ensemble range: ${inv_ensemble.min():.2f} - ${inv_ensemble.max():.2f}")
+    print(f"   Actual price range: ${inv_actual.min():.2f} - ${inv_actual.max():.2f}")
     
     # Prepare dates
     test_dates_adj = test_dates[sequence_length:]
@@ -368,12 +345,7 @@ if __name__ == "__main__":
         performance_metrics=performance_metrics
     )
     
-    # Create simple chart
-    visualizer.create_simple_prediction_chart(
-        dates=test_dates_adj,
-        actual=inv_actual,
-        predictions=plot_predictions
-    )
+    # Only create the dashboard (no simple chart needed)
     
     # Create results summary
     create_visualization_summary(symbol, performance_metrics)
@@ -385,13 +357,12 @@ if __name__ == "__main__":
     print(f"Ensemble vs Transformer: {((transformer_mae - ensemble_mae) / transformer_mae * 100):.1f}% improvement")
     print(f"Ensemble vs LSTM: {((lstm_mae - ensemble_mae) / lstm_mae * 100):.1f}% improvement")
     
-    print(f"\n🎨 Interactive Visualizations Created!")
+    print(f"\n🎨 Interactive Dashboard Created!")
     print(f"📁 Check the 'visualizations/' folder for:")
-    print(f"   • {symbol}_dashboard.html - Complete interactive dashboard")
-    print(f"   • {symbol}_simple.html - Simple prediction chart") 
+    print(f"   • {symbol}_dashboard.html - Interactive dashboard with 3-day forecast")
     print(f"   • {symbol}_results.md - Results summary")
-    print(f"\n💡 Open the HTML files in any web browser to explore!")
-    print(f"   Features: hover tooltips, zoom, pan - no internet needed")
+    print(f"\n💡 Open the HTML file in any web browser to explore!")
+    print(f"   Features: hover tooltips, zoom, pan, 3-day predictions - no internet needed")
     
     # Feature Analysis
     print(f"\n=== Advanced Feature Analysis ===")

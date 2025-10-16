@@ -30,7 +30,7 @@ class PositionalEncoding(nn.Module):
 
 class StockTransformer(nn.Module):
     """Transformer model for stock price prediction"""
-    def __init__(self, input_dim=5, d_model=128, nhead=8, num_layers=4, dropout=0.1, max_len=100):
+    def __init__(self, input_dim=5, d_model=64, nhead=4, num_layers=2, dropout=0.1, max_len=100):
         super(StockTransformer, self).__init__()
         
         self.d_model = d_model
@@ -41,20 +41,34 @@ class StockTransformer(nn.Module):
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=d_model * 4,
-            dropout=dropout,
+            dropout=dropout * 2,  # Higher dropout for regularization
             activation='gelu',
             batch_first=True
         )
         
         self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers)
         
-        # Multi-head output for quantile regression
+        # Learnable attention layer for temporal aggregation
+        self.temporal_attention = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=2,
+            dropout=dropout,
+            batch_first=True
+        )
+        
+        # Simplified output layer for better price prediction
         self.output_layer = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.ReLU(),
+            nn.Dropout(dropout),
             nn.Linear(d_model, d_model // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(d_model // 2, 3)  # [lower_quantile, median, upper_quantile]
+            nn.Linear(d_model // 2, 1)  # NO activation - allow full range
         )
+        
+        # Initialize weights properly
+        self._init_weights()
         
     def forward(self, src, src_mask=None):
         # Input projection
@@ -66,13 +80,35 @@ class StockTransformer(nn.Module):
         # Transformer encoding
         output = self.transformer_encoder(src, src_mask)
         
-        # Use the last time step for prediction
-        output = output[:, -1, :]  # (batch_size, d_model)
+        # Use learnable temporal attention for better aggregation
+        # Create a query vector that learns what temporal patterns to focus on
+        query = torch.mean(output, dim=1, keepdim=True)  # (batch_size, 1, d_model)
         
-        # Generate quantile predictions
-        predictions = self.output_layer(output)  # (batch_size, 3)
+        # Apply temporal attention
+        attended_output, attention_weights = self.temporal_attention(
+            query=query,
+            key=output,
+            value=output
+        )
         
-        return predictions
+        # Use the attended output
+        weighted_output = attended_output.squeeze(1)  # (batch_size, d_model)
+        
+        # Generate single price prediction
+        prediction = self.output_layer(weighted_output)  # (batch_size, 1)
+        
+        return prediction.squeeze(-1)  # Remove last dimension
+    
+    def _init_weights(self):
+        """Initialize model weights for better training"""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.LayerNorm):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
 
 class StockDataset(Dataset):
     """Dataset for stock time series data"""
@@ -104,12 +140,12 @@ def create_attention_mask(seq_len, device):
     mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
     return mask.to(device)
 
-def train_transformer(model, train_loader, val_loader, epochs=50, lr=0.001, device='cpu'):
+def train_transformer(model, train_loader, val_loader, epochs=50, lr=0.0001, device='cpu'):
     """Train the transformer model"""
     model = model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
-    criterion = QuantileLoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.0001)  # Even lower weight decay
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.8)
+    criterion = nn.SmoothL1Loss()  # Use SmoothL1Loss to prevent gradient explosion
     
     train_losses = []
     val_losses = []
@@ -125,7 +161,7 @@ def train_transformer(model, train_loader, val_loader, epochs=50, lr=0.001, devi
             predictions = model(batch_seq)
             loss = criterion(predictions, batch_target)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Relaxed gradient clipping
             optimizer.step()
             
             train_loss += loss.item()

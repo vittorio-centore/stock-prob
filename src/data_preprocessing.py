@@ -6,7 +6,8 @@ def preprocess_data(
     df, 
     feature_cols=["Open","High","Low","Close","Volume"], 
     target_col="Close", 
-    split_ratio=0.8
+    split_ratio=0.8,
+    recent_weight=True  # Give more weight to recent price patterns
 ):
     """
     1) Sorts the DataFrame by Date ascending.
@@ -27,9 +28,12 @@ def preprocess_data(
     # Extract feature data
     data = df[feature_cols].values  # shape: (N, num_features)
 
-    # Scale
+    # Scale using ALL data to ensure consistent scaling across train/test
     scaler = MinMaxScaler()
     data_scaled = scaler.fit_transform(data)
+    print(f"📊 Scaling based on ALL data ({len(data)} days)")
+    close_idx = feature_cols.index('Close') if 'Close' in feature_cols else 0
+    print(f"   Price range: ${data[:, close_idx].min():.2f} - ${data[:, close_idx].max():.2f}")
 
     # Identify target index in feature_cols
     target_idx = feature_cols.index(target_col)

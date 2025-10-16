@@ -59,8 +59,14 @@ class BasicMultiModalProcessor:
     
     def create_enhanced_features(self, df, symbol):
         """Create enhanced feature set with real data only"""
-        # Ensure Date column is datetime
-        df['Date'] = pd.to_datetime(df['Date'])
+        # Ensure Date column is datetime and handle timezone issues
+        if 'Date' in df.columns:
+            # Handle timezone-aware datetime conversion
+            df['Date'] = pd.to_datetime(df['Date'], utc=True).dt.tz_convert(None)
+        elif df.index.name == 'Date' or isinstance(df.index, pd.DatetimeIndex):
+            # If Date is in the index, reset it to a column
+            df = df.reset_index()
+            df['Date'] = pd.to_datetime(df['Date'], utc=True).dt.tz_convert(None)
         
         # 1. Technical Indicators (REAL)
         df = self._add_technical_indicators(df)
