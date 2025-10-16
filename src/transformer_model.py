@@ -64,7 +64,7 @@ class StockTransformer(nn.Module):
             nn.Linear(d_model, d_model // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(d_model // 2, 1)  # NO activation - allow full range
+            nn.Linear(d_model // 2, 1)  # No activation - allow full variance
         )
         
         # Initialize weights properly

@@ -7,7 +7,7 @@ def preprocess_data(
     feature_cols=["Open","High","Low","Close","Volume"], 
     target_col="Close", 
     split_ratio=0.8,
-    recent_weight=True  # Give more weight to recent price patterns
+    recent_weight=True
 ):
     """
     1) Sorts the DataFrame by Date ascending.
@@ -28,10 +28,10 @@ def preprocess_data(
     # Extract feature data
     data = df[feature_cols].values  # shape: (N, num_features)
 
-    # Scale using ALL data to ensure consistent scaling across train/test
+    # Use MinMaxScaler - simple and reliable
     scaler = MinMaxScaler()
     data_scaled = scaler.fit_transform(data)
-    print(f"📊 Scaling based on ALL data ({len(data)} days)")
+    print(f"📊 Scaling based on MinMaxScaler [0,1]")
     close_idx = feature_cols.index('Close') if 'Close' in feature_cols else 0
     print(f"   Price range: ${data[:, close_idx].min():.2f} - ${data[:, close_idx].max():.2f}")
 
@@ -58,7 +58,7 @@ def create_sequences(data, target_idx, sequence_length=60):
     X, y = [], []
     for i in range(len(data) - sequence_length):
         X.append(data[i : i + sequence_length])
-        # Next day’s target
+        # Next day's target
         y.append(data[i + sequence_length, target_idx])
     X = np.array(X)
     y = np.array(y).reshape(-1, 1)

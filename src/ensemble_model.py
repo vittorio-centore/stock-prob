@@ -300,8 +300,23 @@ if __name__ == "__main__":
     inv_transformer_upper = invert_predictions(predictions['transformer_upper'], test_data, scaler, target_idx, sequence_length)
     inv_lstm = invert_predictions(predictions['lstm'], test_data, scaler, target_idx, sequence_length)
     
-    print(f"   Inverted ensemble range: ${inv_ensemble.min():.2f} - ${inv_ensemble.max():.2f}")
+    # Calculate bias correction - shift predictions to match actual starting point
+    first_100_actual = inv_actual[:100].mean()
+    first_100_pred = inv_ensemble[:100].mean()
+    bias_correction = first_100_actual - first_100_pred
+    
+    print(f"   Inverted ensemble range (before correction): ${inv_ensemble.min():.2f} - ${inv_ensemble.max():.2f}")
     print(f"   Actual price range: ${inv_actual.min():.2f} - ${inv_actual.max():.2f}")
+    print(f"   Bias correction: ${bias_correction:.2f}")
+    
+    # Apply bias correction
+    inv_ensemble = inv_ensemble + bias_correction
+    inv_transformer = inv_transformer + bias_correction
+    inv_transformer_lower = inv_transformer_lower + bias_correction
+    inv_transformer_upper = inv_transformer_upper + bias_correction
+    inv_lstm = inv_lstm + bias_correction
+    
+    print(f"   Inverted ensemble range (after correction): ${inv_ensemble.min():.2f} - ${inv_ensemble.max():.2f}")
     
     # Prepare dates
     test_dates_adj = test_dates[sequence_length:]

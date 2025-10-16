@@ -2,13 +2,13 @@
 # AAPL Stock Prediction Results
 
 ## Model Performance
-- **Ensemble MAE**: $19.12
-- **Transformer MAE**: $16.79  
-- **LSTM MAE**: $26.53
+- **Ensemble MAE**: $16.29
+- **Transformer MAE**: $16.29  
+- **LSTM MAE**: $16.29
 
 ## Improvements
-- **Ensemble vs Transformer**: -13.9% better
-- **Ensemble vs LSTM**: 27.9% better
+- **Ensemble vs Transformer**: 0.0% better
+- **Ensemble vs LSTM**: 0.0% better
 
 ## Files Generated
 - `AAPL_dashboard.html` - Complete interactive dashboard

@@ -2,9 +2,9 @@
 # MSFT Stock Prediction Results
 
 ## Model Performance
-- **Ensemble MAE**: $93.85
-- **Transformer MAE**: $93.85  
-- **LSTM MAE**: $93.85
+- **Ensemble MAE**: $43.55
+- **Transformer MAE**: $43.55  
+- **LSTM MAE**: $43.55
 
 ## Improvements
 - **Ensemble vs Transformer**: 0.0% better
